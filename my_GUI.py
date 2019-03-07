@@ -69,7 +69,7 @@ class Example(QWidget):
     def load_file(self, update=False):
         self.frames = pims.open(self.filename)
 
-        self.frames.set_end_frame(100) # DEMONSTRATION FILTERING
+        #self.frames.set_end_frame(100) # DEMONSTRATION FILTERING
 
         #print("Pims opened", self.frames.filename)
         self.lenframes = len(self.frames)
