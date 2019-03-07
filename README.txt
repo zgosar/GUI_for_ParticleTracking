@@ -15,3 +15,6 @@ REQUIREMENTS
  - pandas
 
  - TWV_Reader (should be included here)
+
+Mandatory file
+https://www.dropbox.com/s/wqby17mbiaykopq/passiveInTrapP1.twv?dl=0
