@@ -18,3 +18,6 @@ REQUIREMENTS
 
 Mandatory file
 https://www.dropbox.com/s/wqby17mbiaykopq/passiveInTrapP1.twv?dl=0
+
+TrackPy Walkthrough
+http://soft-matter.github.io/trackpy/v0.4.1/tutorial/walkthrough.html
