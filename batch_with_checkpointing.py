@@ -16,6 +16,9 @@ from PyQt5.QtCore import pyqtSignal
 class ProcessThread(QtCore.QThread):
     sig1 = pyqtSignal(int, str, np.ndarray)
     # int frame index, str filename, image
+    sig1a = pyqtSignal(int, pd.core.frame.DataFrame, np.ndarray)
+    # the same as sig1, except it doesn't save particles to
+    # file and sends the filename, but sends the particles directly.
     sig2 = pyqtSignal(str)
 
     def __init__(self, filename, frames, folder, parent=None, diameter=11, minmass=100, maxsize=None, separation=None,
@@ -63,12 +66,13 @@ class ProcessThread(QtCore.QThread):
                 self.sig1.emit(str(err), 0, 1)
                 break
 
-    def run(self):
+    def run(self, save_checkpoints=False):
         try:
             self.sig2.emit("Locating particles...")
-            self.batch_with_checkpointing()
+            particles = self.batch_with_checkpointing(save_checkpoints=save_checkpoints)
             self.sig2.emit("Loading all particles to RAM...")
-            particles = self.load_particles()
+            if save_checkpoints:
+                particles = self.load_particles()
             self.sig2.emit("Linking particles...")
             trajectories = self.link_particles()
             self.sig2.emit("Getting trap data...")
@@ -149,7 +153,7 @@ class ProcessThread(QtCore.QThread):
       
         return t
 
-    def batch_with_checkpointing(self):
+    def batch_with_checkpointing(self, save_checkpoints=True):
         """ Based on batch from TrackPy. Simplified to use in the GUI.
         
         Locate Gaussian-like blobs of some approximate size in a set of images.
@@ -321,10 +325,15 @@ class ProcessThread(QtCore.QThread):
                 continue
             
             if output is None:
-                features.to_pickle(folder + '/{:}.pkl'.format(frame_no))
-                all_features.append(features)
-                self.sig1.emit(frame_no, folder + '/{:}.pkl'.format(frame_no),
+                if save_checkpoints:
+                    features.to_pickle(folder + '/{:}.pkl'.format(frame_no))
+                    self.sig1.emit(frame_no, folder + '/{:}.pkl'.format(frame_no),
                                image)
+                else:
+                    self.sig1a.emit(frame_no, features,
+                               image)
+                # TODO: Do not append features to all_features if there is save checkpoints happening.
+                all_features.append(features)
             else:
                 output.put(features)
             

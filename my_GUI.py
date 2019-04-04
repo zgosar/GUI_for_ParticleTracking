@@ -335,6 +335,7 @@ class Example(QWidget):
             self.sig.emit('test')
             self.thread1.start()
             self.thread1.sig1.connect(self.self_receive_data)
+            self.thread1.sig1a.connect(self.self_receive_data_a)
             self.thread1.sig2.connect(self.self_receive_text)
             self.playButton.setIcon(self.style().standardIcon(QStyle.SP_MediaStop))
             self.playButton.setText("Stop")
@@ -344,6 +345,10 @@ class Example(QWidget):
         #print(frame, fname)
         tmp = pd.read_pickle(self.folder + '/{:}.pkl'.format(frame))
         self.update_from_calculation(frame, tmp, image)
+
+    def self_receive_data_a(self, frame, particles, image):
+        #print(frame, fname)
+        self.update_from_calculation(frame, particles, image)
 
     def self_receive_text(self, text):
         self.lowerStatusText.setText(text)
