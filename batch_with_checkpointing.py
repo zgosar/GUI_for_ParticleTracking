@@ -73,6 +73,10 @@ class ProcessThread(QtCore.QThread):
             self.sig2.emit("Loading all particles to RAM...")
             if save_checkpoints:
                 particles = self.load_particles()
+            else:
+                particles.reset_index(drop=True, inplace=True) # drop deletes the previous index.
+                #inplace=True is the same as f = f.reset_index(inplace=False) except it may improve memory usage
+                np.save(self.filename[:-4] + '_particles', particles)
             self.sig2.emit("Linking particles...")
             trajectories = self.link_particles()
             self.sig2.emit("Getting trap data...")
