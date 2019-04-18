@@ -1,4 +1,5 @@
 import trackpy as tp
+import warnings
 import matplotlib.pyplot as plt
 import numpy as np
 import json
@@ -33,6 +34,7 @@ class ProcessThread(QtCore.QThread):
         self.diameter = diameter
         self.minmass = minmass
         self.maxsize = maxsize
+        print("Processing thread, maxsize", maxsize)
         self.separation = separation
         self.noise_size = noise_size
         self.smoothing_size = smoothing_size
@@ -82,7 +84,12 @@ class ProcessThread(QtCore.QThread):
             self.sig2.emit("Getting trap data...")
             print("get_all_tweezer_positions CALL")
             #self.frames.check_for_time_jumps()
-            times, laserPowers, traps = self.frames.get_all_tweezer_positions()
+            if self.filename[-4:] == '.twv':
+                times, laserPowers, traps = self.frames.get_all_tweezer_positions()
+            else:
+                times = [i for i in range(len(self.frames))]
+                laserPowers = [0 for i in times]
+                traps = [[[0 for i in range(3)] for j in times] for k in range(4)]
             self.sig2.emit("Saving everything.")
             self.save_everything(trajectories, times, laserPowers, traps)
             self.sig2.emit("Finished.")
@@ -255,8 +262,8 @@ class ProcessThread(QtCore.QThread):
         frames = self.frames
         diameter = self.diameter
         minmass = self.minmass
-        maxsize=None  # MAXSIZE, SEPARATION ARE IGNORED.
-        separation=None # MAXSIZE, SEPARATION ARE IGNORED.
+        maxsize = self.maxsize
+        separation = self.separation
         noise_size = self.noise_size
         smoothing_size = self.smoothing_size
         threshold = self.threshold
@@ -296,15 +303,6 @@ class ProcessThread(QtCore.QThread):
                 # Interpret meta to be a file handle.
                 record_meta(meta_info, meta)
         """
-        # addition
-        try:
-            folder = self.filename[:-4] + '_checkpoints'
-            os.mkdir(folder) # hardcoded extension length
-            # not compatible with slicing of frames. It sucks. TODO
-        except FileExistsError:
-            pass
-        except Exception:
-            raise
         
         all_features = []
         for i, image in enumerate(frames):
