@@ -1,7 +1,7 @@
 import sys
 from PyQt5.QtWidgets import (QWidget, QLabel, QLineEdit, 
     QTextEdit, QGridLayout, QApplication, QVBoxLayout, QHBoxLayout,
-    QSlider, QFileDialog, QPushButton, QStyle)
+    QSlider, QFileDialog, QPushButton, QStyle, QCheckBox)
 from PyQt5 import QtGui
 from PyQt5.QtCore import pyqtSignal
 import MySlider
@@ -96,6 +96,10 @@ class Example(QWidget):
         self.fileButton = QPushButton('Load file')
         self.fileButton.clicked.connect(self.on_load_file)
         self.fileSelectorLayout.addWidget(self.fileButton)
+        self.invertCheckbox = QCheckBox("Invert")
+        self.invertCheckbox.setChecked(False)
+        self.invertCheckbox.stateChanged.connect(self.update)
+        self.fileSelectorLayout.addWidget(self.invertCheckbox)
 
         self.win = pg.GraphicsWindow(title="Basic plotting examples")
         self.grid.addWidget(self.win, 1, 0)
@@ -201,6 +205,7 @@ class Example(QWidget):
             #    self.diameter += 1
             self.maxsize = None # int(self.imageViewBoxVerticalSliders[1].getValue()) # MAXSIZE is ignored
             self.separation = int(self.imageViewBoxVerticalSliders[2].getValue())
+            self.invert = self.invertCheckbox.isChecked()
             return self.diameter, self.maxsize, self.separation
         else:
             self.set_all_sliders()
@@ -222,7 +227,7 @@ class Example(QWidget):
         noise_size=1
         smoothing_size=None
         threshold=None
-        invert=True
+        invert=self.invert
         percentile=64
         topn=None
         preprocess=True
@@ -379,7 +384,8 @@ class Example(QWidget):
             self.get_all_sliders()
             self.thread1 = ProcessThread(self.filename[0], self.frames, folder=self.folder,
                                          diameter=self.diameter, maxsize=self.maxsize,
-                                         separation=self.separation, minmass=self.minmass)
+                                         separation=self.separation, minmass=self.minmass,
+                                         invert=self.invert)
             self.sig.connect(self.thread1.on_source)
             self.sig.emit('test')
             self.thread1.start()
