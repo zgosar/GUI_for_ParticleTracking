@@ -1,20 +1,24 @@
 """
 Defines the TWV_Reader for pims.
 The reader reads .twv files from Optical Tweezers.
-Requirements ctypes, pims, numpy
-Not mandatory requirements:
--matplotlib
+Requirements:
+ - ctypes
+ - pims
+ - numpy
+Optional requirements:
+ - matplotlib
 """
 
-
-from pims import FramesSequence, Frame
-from ctypes import * # todo remove * import.
-import numpy as np
+from ctypes import c_uint16, c_uint32, c_float, c_double
+from ctypes import Structure
 import struct
+import unittest
+from pims import FramesSequence, Frame
+import numpy as np
 
-verbose_level = 2
+VERBOSE_LEVEL = 2
 
-class TArFrameROI(Structure):
+class TArframe_ROI(Structure):
     _pack_ = 1
     _fields_ = [("Left", c_uint16),
                 ("Top", c_uint16),
@@ -26,7 +30,7 @@ class TArFrameData(Structure):
     _pack_ = 1
     _fields_ = [("HeaderSize", c_uint16),
                 ("FrameDataIncl", c_uint16),
-                ("ROI", TArFrameROI),
+                ("ROI", TArframe_ROI),
                 ("BytesPerPixel", c_uint16),
                 ("FrameRate", c_double),
                 ("Exposure", c_double),
@@ -36,10 +40,10 @@ class TArFrameData(Structure):
 
 class TArCalibrationData(Structure):
     _pack_ = 1
-    _fields_ = [("ImageToSampleScale", c_float)               
+    _fields_ = [("ImageToSampleScale", c_float)
                 ]
 
-class TArVideoHeader(Structure):
+class TArvideo_header(Structure):
     _pack_ = 1
     _fields_ = [("VideoID", c_uint16),
                 ("VideoVersion", c_uint16),
@@ -57,7 +61,7 @@ class TArTrapData(Structure):
                 ("Intensity", c_float)
                 ]
 
-class TArFrameHeader(Structure):
+class TArframe_header(Structure):
     _pack_ = 1
     _fields_ = [("FrameNumber", c_uint32),
                 ("FrameTime", c_float),
@@ -65,7 +69,7 @@ class TArFrameHeader(Structure):
                 ("CalibrationData1", TArTrapData),
                 ("CalibrationData2", TArTrapData),
                 ("CalibrationData3", TArTrapData),
-                ("CalibrationData4", TArTrapData)                
+                ("CalibrationData4", TArTrapData)         
                 ]
 
 def display_attr(obj):
@@ -75,90 +79,76 @@ def display_attr(obj):
     for field_name, field_type in obj._fields_:
         print(field_name, getattr(obj, field_name))
 
-def test():
-    "Obsolete"
-
-    f.seek(getattr(videoHeader, "VideoHeaderSize"))
-    f.readinto(frameHeader)
-    
-    frameData=getattr(videoHeader, "FrameData")
-    display_attr(frameData)
-    frameROI=getattr(frameData, "ROI")
-    display_attr(frameROI)
-    
-    print(frameROI)
-    imageW =getattr(frameROI, "Width")
-    imageH =getattr(frameROI, "Height")
-    imageSize= imageW*imageH
-    print( imageW, imageH,imageSize)
-    
-    
-    print("Frame header: ====================")
-    display_attr(frameHeader)
-    f.seek(imageSize,1)
-    
-    f.readinto(frameHeader)
-    print("NEW Frame header: ====================")
-    for field_name, field_type in frameHeader._fields_:
-        print(field_name, getattr(frameHeader, field_name))
-    f.close()
-
-
-
 class TWV_Reader(FramesSequence):
-    #propagate_attrs = 'filename'
+    """
+    Reader for .twv files for pims package.
+    """
     
     def __init__(self, filename):
         self.filename = filename
         self.f = open(filename, "rb")
-        
-        self.videoHeader = TArVideoHeader()
-        self.f.readinto(self.videoHeader)
-        self.f.seek(getattr(self.videoHeader, "VideoHeaderSize"))
-        if self.videoHeader.FrameData.BytesPerPixel != 1:
-            from warnings import warn
-            warn("videoHeader.FrameData.BytesPerPixel is not 1")
 
-        #metadata['frameHeader'] = TArFrameHeader()
-        #f.readinto(metadata['frameHeader'])
-        
-        self._len =  self.videoHeader.RecordedFrames
-        self._dtype =  np.uint8
-        self._frame_shape = (self.videoHeader.FrameData.ROI.Width,
-                             self.videoHeader.FrameData.ROI.Height)
-        self.frame_header_size = self.videoHeader.FrameData.HeaderSize
-        self.frame_size_bytes = self._frame_shape[0] * self._frame_shape[1] + self.frame_header_size
+        self.video_header = TArvideo_header()
+        self.f.readinto(self.video_header)
+        self.f.seek(getattr(self.video_header, "VideoHeaderSize"))
+        if self.video_header.FrameData.BytesPerPixel != 1:
+            from warnings import warn
+            warn("video_header.FrameData.BytesPerPixel is not 1")
+       
+        self._len = self.video_header.RecordedFrames
+        self._dtype = np.uint8
+        self._frame_shape = (self.video_header.FrameData.ROI.Width,
+                             self.video_header.FrameData.ROI.Height)
+        self.frame_header_size = self.video_header.FrameData.HeaderSize
+        self.frame_size_bytes = (self._frame_shape[0] * self._frame_shape[1] +
+                                 self.frame_header_size)
 
     def get_all_metadata(self):
+        """
+        Returns video metadata (not individual frame metadata) as a dict.
+        """
         if 0:
-            display_attr(self.videoHeader)
+            display_attr(self.video_header)
             print('---')
-            display_attr(self.videoHeader.FrameData)
+            display_attr(self.video_header.FrameData)
             print('---')
-            display_attr(self.videoHeader.FrameData.ROI)
+            display_attr(self.video_header.FrameData.ROI)
             print('---')
-            display_attr(self.videoHeader.CalibrationData)
+            display_attr(self.video_header.CalibrationData)
 
         out_dict = dict()
         out_dict['ROI'] = dict()
-        out_dict['ROI']['Left'] = self.videoHeader.FrameData.ROI.Left
-        out_dict['ROI']['Top'] = self.videoHeader.FrameData.ROI.Top
-        out_dict['ROI']['Width'] = self.videoHeader.FrameData.ROI.Width
-        out_dict['ROI']['Height'] = self.videoHeader.FrameData.ROI.Height
-        out_dict['ImageToSampleScale'] = self.videoHeader.CalibrationData.ImageToSampleScale
-        out_dict['FrameRate'] = self.videoHeader.FrameData.FrameRate
-        out_dict['Exposure'] = self.videoHeader.FrameData.Exposure
-        out_dict['Gain'] = self.videoHeader.FrameData.Gain
+        out_dict['ROI']['Left'] = self.video_header.FrameData.ROI.Left
+        out_dict['ROI']['Top'] = self.video_header.FrameData.ROI.Top
+        out_dict['ROI']['Width'] = self.video_header.FrameData.ROI.Width
+        out_dict['ROI']['Height'] = self.video_header.FrameData.ROI.Height
+        out_dict['ImageToSampleScale'] = self.video_header.CalibrationData.ImageToSampleScale
+        out_dict['FrameRate'] = self.video_header.FrameData.FrameRate
+        out_dict['Exposure'] = self.video_header.FrameData.Exposure
+        out_dict['Gain'] = self.video_header.FrameData.Gain
         return out_dict
 
     def set_end_frame(self, end_frame):
-        self._len = end_frame
+        """
+        Slicing objects in pims should work, but doesn't.
+        This function defines 'end_frame' as the last frame of the video.
+        """
+        if end_frame <= self.video_header.RecordedFrames:
+            self._len = end_frame
+        else:
+            raise ValueError("Unable to set {:} as the end frame.".format(end_frame) +
+                             "There are only {:} frames in the file.".format(
+                                 self.video_header.RecordedFrames))
+
+    def reset_end_frame(self):
+        """ Resets frame count to default value (the same as in the opened file). """
+        self._len = self.video_header.RecordedFrames
 
     def get_frame(self, frame_no):
         """
-        Returns a frame (image).
+        Returns a frame (image) as a np.array.
         """
-        self.f.seek(self.videoHeader.VideoHeaderSize) # absolute seek
+        self.f.seek(self.video_header.VideoHeaderSize) # absolute seek
         self.f.seek(frame_no * self.frame_size_bytes + self.frame_header_size, 1) # relative seek
         image = []
         unpack_format = '{:}B'.format(self._frame_shape[0])
@@ -166,7 +156,7 @@ class TWV_Reader(FramesSequence):
             image.append(struct.unpack(
                 unpack_format,
                 self.f.read(self._frame_shape[0])))
-        image = np.array(image, dtype = self._dtype)
+        image = np.array(image, dtype=self._dtype)
 
         return Frame(image, frame_no=frame_no)
 
@@ -175,23 +165,29 @@ class TWV_Reader(FramesSequence):
         OBSOLETE.
         Use get_frame_time.
         """
-        frame_header_size = self.videoHeader.FrameData.HeaderSize
-        self.f.seek(self.videoHeader.VideoHeaderSize)
+        frame_header_size = self.video_header.FrameData.HeaderSize
+        self.f.seek(self.video_header.VideoHeaderSize)
         self.f.seek(frame_no * (self._frame_shape[0] * self._frame_shape[1] + frame_header_size),
                     1)
-        frameHeader = TArFrameHeader()
-        self.f.readinto(frameHeader)
-        return frameHeader.FrameTime
+        frame_header = TArframe_header()
+        self.f.readinto(frame_header)
+        return frame_header.FrameTime
 
     def get_frame_time(self, frame_no):
-        self.f.seek(self.videoHeader.VideoHeaderSize) # absolute seek
+        """
+        Returns the timestamo of a frame.
+        """
+        self.f.seek(self.video_header.VideoHeaderSize) # absolute seek
         self.f.seek(frame_no * self.frame_size_bytes, 1) # relative seek
-        frameHeader = TArFrameHeader()
-        self.f.readinto(frameHeader)
-        return frameHeader.FrameTime
+        frame_header = TArframe_header()
+        self.f.readinto(frame_header)
+        return frame_header.FrameTime
 
     def __len__(self):
         return self._len
+
+    def __del__(self):
+        self.f.close()
 
     @property
     def frame_shape(self):
@@ -212,44 +208,52 @@ class TWV_Reader(FramesSequence):
         Kwargs:
          - treshold=10**-2: If relative error is below this treshold,
              video is considered OK.
-         - show=False: If true, the time vs. frame number and time step are plotted.
+         - show=False: If true, the time vs. frame number and time step are plotted
+             (matplotlib required).
 
         TODO: Compare to reported FPS, instead of with each other.
         """
         times = []
-        self.f.seek(self.videoHeader.VideoHeaderSize) # absolute seek
-        for i in range(self._len):
-            frameHeader = TArFrameHeader()
-            self.f.readinto(frameHeader)
-            times.append(frameHeader.FrameTime)
+        self.f.seek(self.video_header.VideoHeaderSize) # absolute seek
+        frame_rate = self.video_header.FrameData.FrameRate
+        frame_time = 1/frame_rate
+        for _ in range(self._len):
+            frame_header = TArframe_header()
+            self.f.readinto(frame_header)
+            
+            times.append(frame_header.FrameTime)
             self.f.seek(self._frame_shape[0] * self._frame_shape[1], 1) # relative seek
             
         times = np.array(times)
         time_deltas = times[1:]-times[:-1]
         min_time = min(time_deltas)
         max_time = max(time_deltas)
-        if verbose_level >= 2:
-            print("Min frame time {:}, max frame time {:}".format(
-                min_time, max_time))
-            print(times)
+        if VERBOSE_LEVEL >= 2:
+            print("Min frame time {:}, max frame time {:}, frame_time {:}".format(
+                min_time, max_time, frame_time))
         ret = True
-        if (max_time-min_time)/min_time > treshold:
-            if verbose_level >= 1:
+        if (max_time > frame_time * (1 + treshold) or
+            min_time < frame_time * (1 - treshold)):
+            if VERBOSE_LEVEL >= 1:
                 print("There are time jumps: min_time {:}, max_time {:},"
-                  "relative difference {:}, treshold {:}".format(
+                    "relative difference {:}, treshold {:}".format(
                       min_time, max_time, (max_time-min_time)/min_time, treshold))
             ret = False
         if show:
             import matplotlib.pyplot as plt
-            f, ax = plt.subplots(2, 1, sharex=True)
+            fig, ax = plt.subplots(2, 1, sharex=True)
             ax[0].plot(range(len(times)), times)
             ax[0].set_title("Time vs frame number")
+            ax[0].set_ylabel("Time from start [s]")
             
-            ax[1].plot(range(len(times)-1), time_deltas)
-            #ax[1].semilogy()
-            ax[1].set_title("Time step between frames (log scale) vs frame number.\n"
-                            "avg FPS = {:}".format(
-                len(times)/(times[-1] - times[0])))
+            ax[1].plot(range(len(times)-1), time_deltas, label="Actual time between frames")
+            ax[1].plot([0, len(times)-1], [frame_time, frame_time], label="Reported time between frames")
+            ax[1].legend()
+            ax[1].semilogy()
+            ax[0].set_title("avg FPS = {:}, reported FPS = {:}".format(
+                len(times)/(times[-1] - times[0]), frame_rate))
+            ax[1].set_ylabel("Time between frames [s]\nlog scale")
+            ax[1].set_xlabel("Frame number")
             plt.show()
             plt.cla()
             plt.clf()
@@ -258,26 +262,28 @@ class TWV_Reader(FramesSequence):
 
     def get_all_tweezer_positions(self, which=[0,1,2,3], fname=None):
         """
-        TODO
+        TODO - cleanup
         Returns all tweezers positions
         - [times, laserPower, (trapX, trapY, intensity) for each trap]
         Optional input: which:, specifies which tweezers positions to return.
-        If fname is set, it is written to it.
-        Otherwise it is returned as an array in the shape 
+        If fname is set, it is written to it (tab separated values).
+        Otherwise it is returned as an array.
         """
-        print("get_all_tweezer_positions")
-        verbose_lvl = 0 # TODO, get from config.
-        laserPowers = [] # TODO
+        
+        if VERBOSE_LEVEL > 1:
+            print("get_all_tweezer_positions")
+        laser_powers = [] # TODO
         times = []
         traps = [[] for i in range(4)]
-        self.f.seek(self.videoHeader.VideoHeaderSize) # absolute seek
-        for i in range(len(self)):
-            frameHeader = TArFrameHeader()
-            self.f.readinto(frameHeader)
-            times.append(frameHeader.FrameTime)
-            laserPowers.append(frameHeader.LaserPower)
+        self.f.seek(self.video_header.VideoHeaderSize) # absolute seek
+        for _ in range(len(self)):
+            frame_header = TArframe_header()
+            self.f.readinto(frame_header)
+            times.append(frame_header.FrameTime)
+            laser_powers.append(frame_header.LaserPower)
             for j in which:
-                tmp = frameHeader.__getattribute__("CalibrationData{:}".format(j+1))
+                tmp = frame_header.__getattribute__(
+                    "CalibrationData{:}".format(j+1))
                 traps[j].append([
                     tmp.PositionX,
                     tmp.PositionY,
@@ -286,28 +292,51 @@ class TWV_Reader(FramesSequence):
             
         times = np.array(times)
         if fname is None:
-            return times, laserPowers, traps
-            # times, laserPowers, traps[which_trap][time][x, y, power]
+            return times, laser_powers, traps
+            # times, laser_powers, traps[which_trap][time][x, y, power]
         else:
             pass
             # TODO
             # this will not be used. This will be used together
             # with particle tracker.
             
+class Test(unittest.TestCase):
 
+    def setUp(self):
+        #self.twv_reader = TWV_Reader("passiveInTrapP1.twv")
+        pass
+    
+    def test_set_end_frame_number(self):
+        twv_reader = TWV_Reader("passiveInTrapP1.twv")
+        twv_reader.set_end_frame(50)
+        self.assertEqual(len(twv_reader), 50)
 
-if __name__ == '__main__':
+    @unittest.expectedFailure
+    def test_check_end_frame_too_high(self):
+        twv_reader = TWV_Reader("passiveInTrapP1.twv")
+        twv_reader.set_end_frame(100000)
+        twv_reader.f.close()
+        
+
+if __name__ == '__main__' and 1:
+    # TODO select examle videos for test
     filename = "passiveInTrapP1.twv"
-    filename = "F:/Gersak/190226_Voda23_2TrapsAS_20kHz.twv"
+    #filename = "F:/Gersak/190226_Voda23_2TrapsAS_20kHz.twv"
+    #filename = "F:/DefaultVideo_15.twv"
     #print(get_all_frame_times(filename, show=True, treshold=10**-2))
     a = TWV_Reader(filename)
     print('filename', a.filename)
-    a.set_end_frame(50)
+    a.set_end_frame(10000)
     c = a.get_all_metadata()
-    #a.check_for_time_jumps(show=False)
-    #times, laserPowers, traps = a.get_all_tweezer_positions()
-    import cv2
+    a.check_for_time_jumps(show=True)
+    #times, laser_powers, traps = a.get_all_tweezer_positions()
+    #import cv2
     #cv2.namedWindow('image',cv2.WINDOW_NORMAL)
-    #for i in range(a.videoHeader.RecordedFrames):
+    #for i in range(a.video_header.RecordedFrames):
     #    cv2.imshow('image', a[i])
     #    cv2.waitKey(1)
+
+
+if __name__ == '__main__':
+    unittest.main()
+    
