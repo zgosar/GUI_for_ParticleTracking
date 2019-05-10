@@ -138,6 +138,7 @@ class DiameterVerticalSlider(VerticalSlider):
             self.label.setText("{:}".format(self.x))
         else:
             self.label.setText("{:.4f}".format(self.x))
+            
     def setSliderPosition(self, value):
         self.slider.setSliderPosition((value-1)//2)
 

@@ -68,20 +68,27 @@ class Example(QWidget):
         for i in range(len(self.colorbar_text)): self.colorbarViewBox.addItem(self.colorbar_text[i])
 
     def load_file(self, update=False, **kwargs):
-        print(self.filename)
+        """
+        Removed as_grey kwarg handling (and any other kwargs handling for that matter.
+        """
+        #print(self.filename)
         if self.intype == 'png':
-            self.frames = pims.ImageSequence(self.filename, **kwargs)
+            self.frames = pims.ImageSequence(self.filename, as_grey=True)
         else:
-            self.frames = pims.open(self.filename[0], **kwargs)
+            self.frames = pims.open(self.filename[0])
 
         #self.frames.set_end_frame(100) # DEMONSTRATION FILTERING
 
         self.lenframes = len(self.frames)
+        
         if update:
             self.fileTextbox.setText(self.filename[0])
             self.framesSlider.slider.setMaximum(self.lenframes-1)
             self.framesSlider.label_format = '{:}/' + str(self.lenframes)
             self.framesSlider.setLabelValue()
+            self.particles_vs_time_plot_item.setXRange(0, self.lenframes, padding=0)
+            self.particles_vs_time_plot_item_scat.clear()
+
             self.update('On load file update call')
         
     def initUI(self):
@@ -118,15 +125,23 @@ class Example(QWidget):
                                                       label_format='{:}/'+str(self.lenframes))
         self.framesSliderLayout = QHBoxLayout()
         self.framesSliderLayout.addWidget(self.framesSlider)
-        self.grid.addLayout(self.framesSliderLayout, 3, 0, -1, -1)
+        self.grid.addLayout(self.framesSliderLayout, 4, 0, -1, -1)
         self.framesSlider.slider.valueChanged.connect(lambda value: self.update('framesSlider', value))
         self.playButton = QPushButton('Start')
         self.playButton.setIcon(self.style().standardIcon(QStyle.SP_MediaPlay))
         self.framesSliderLayout.addWidget(self.playButton)
         self.playButton.clicked.connect(self.start_processing)
 
+        self.particles_vs_time_plot = pg.PlotWidget(labels={'left':'# Particles', 'bottom':'Frame'})
+        self.particles_vs_time_plot_item = self.particles_vs_time_plot.getPlotItem()
+        self.particles_vs_time_plot_item_scat = pg.ScatterPlotItem()
+        self.particles_vs_time_plot_item.addItem(self.particles_vs_time_plot_item_scat)
+        self.particles_vs_time_plot_item.setXRange(0, self.lenframes, padding=0)
+        self.grid.addWidget(self.particles_vs_time_plot, 3, 0, 1, -1)
+
+
         self.lowerStatusText = QLabel()
-        self.grid.addWidget(self.lowerStatusText, 4, 0, -1, -1)
+        self.grid.addWidget(self.lowerStatusText, 5, 0, -1, -1)
 
         self.imageViewBoxVerticalSliders = []
 
@@ -193,8 +208,11 @@ class Example(QWidget):
 
     def on_lin_region_change(self):
         minmass, maxmass = self.linRegion.getRegion()
+        if abs(minmass*self.linRegionUpperLimit/255 - self.minmass)/self.minmass > 10**-2:
+            self.particles_vs_time_plot_item_scat.clear()        
         self.minmass = minmass*self.linRegionUpperLimit/255
         self.maxmass = maxmass*self.linRegionUpperLimit/255
+        #print("On lin region change", minmass, maxmass, self.linRegionUpperLimit, self.minmass, self.maxmass)
         self.update('on_lin_region_change')
 
     def get_all_sliders(self):
@@ -252,6 +270,7 @@ class Example(QWidget):
         """
         Kwargs never happen.
         Args tell update what called it and the new value (of sliders...). Do not use this arg for different processing in update!
+        Please, please. Dont.
         """
         #print("Self.update", self.running, time(), *args, list(kwargs))
         if not self.running:
@@ -289,6 +308,16 @@ class Example(QWidget):
 
             self.rightPlotItem.setLabel('bottom', self.xAxisSelector.currentText())
             self.rightPlotItem.setLabel('left', self.yAxisSelector.currentText())
+
+            if args[0] not in ['framesSlider', 'on_lin_region_change',
+                               'xAxisSelector.currentTextChanged',
+                               'yAxisSelector.currentTextChanged']: # TODO. Please don't use this type of check.
+                # Does not work. Does not differentiate between user change and automatic colorbar change.
+                # TODO, fix this.
+                self.particles_vs_time_plot_item_scat.clear()
+                
+            self.bottom_plot_update(len(tmp))
+            
             self.lowerStatusText.setText("Updated in {:.3f}s".format(time()-t0))
         else:
             self.set_all_sliders()
@@ -326,8 +355,11 @@ class Example(QWidget):
 
         self.rightPlotItem.setLabel('bottom', self.xAxisSelector.currentText())
         self.rightPlotItem.setLabel('left', self.yAxisSelector.currentText())
+
+        self.bottom_plot_update(len(particles))
+        #print(len(particles))
         
-    def update_colorbar_texts_and_positions(self):
+    def update_colorbar_texts_and_positions(self, set_position=False):
         """
         Args:
          - tmpMaxMass: the maximal detected mass in an image.
@@ -340,8 +372,9 @@ class Example(QWidget):
         self.colorbar_text[2].setText(str(int(self.minmass)))
         self.colorbar_text[1].setPos(0, self.maxmass/self.linRegionUpperLimit*255)
         self.colorbar_text[2].setPos(0, self.minmass/self.linRegionUpperLimit*255)
-        self.linRegion.setRegion((self.minmass/self.linRegionUpperLimit*255,
-                                  self.maxmass/self.linRegionUpperLimit*255))
+        if True:
+            self.linRegion.setRegion((self.minmass/self.linRegionUpperLimit*255,
+                                      self.maxmass/self.linRegionUpperLimit*255))
 
     def on_load_file(self):
         fileName, other = QFileDialog.getOpenFileNames(
@@ -351,7 +384,7 @@ class Example(QWidget):
         if len(fileName) == 0: return
         self.intype = fileName[0].split('.')[-1]
         self.filename = fileName[:]
-        self.load_file(update=True, as_grey=True)
+        self.load_file(update=True)
             
     def start_processing(self):
 
@@ -394,6 +427,7 @@ class Example(QWidget):
             self.thread1.sig2.connect(self.self_receive_text)
             self.playButton.setIcon(self.style().standardIcon(QStyle.SP_MediaStop))
             self.playButton.setText("Stop")
+            self.particles_vs_time_plot_item_scat.clear()
             self.running = True
 
     def self_receive_data(self, frame, fname, image):
@@ -453,6 +487,19 @@ class Example(QWidget):
         self.rightPlotItemScat.clear()
         print("Plotted")
 
+    def bottom_plot_update(self, no_of_particles):
+        # options
+        # add scatter point
+        # update line plots
+        if self.running:
+            pass
+            #self.plots.append(
+            #    self.rightPlotItem.plot(trajectories[i].T[0], trajectories[i].T[1], pen=pg.mkPen(convert_rgb_to_hex(
+            #        viridis(i/no_of_trajectories)), width=5)))
+            # TODO change to line.
+            self.particles_vs_time_plot_item_scat.addPoints([self.frame_number], [no_of_particles])
+        else:
+            self.particles_vs_time_plot_item_scat.addPoints([self.frame_number], [no_of_particles])
 
     def closeEvent(self, event):
         print("Closing", event)
@@ -479,7 +526,7 @@ if __name__ == '__main__':
     import pims
     import TWV_Reader
     import trackpy as tp
-    filename = "passiveInTrapP1.twv"
+    filename = "tests/test_example.twv"
 
     sys._excepthook = sys.excepthook 
     def exception_hook(exctype, value, traceback):
