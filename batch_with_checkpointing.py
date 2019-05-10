@@ -104,6 +104,7 @@ class ProcessThread(QtCore.QThread):
         max_particles = int(round(trajectories.max()['particle']))
         with open(self.filename[:-4] + '_out.dat', 'w') as f:
             for i in range(len(self.frames)):
+                self.sig2.emit("Saving everything. {:}/{:}".format(i, len(self.frames)))
                 tmp = ''
                 tmp += str(times[i]) + '\t'
                 tmp += str(laserPowers[i]) + '\t'
@@ -334,6 +335,7 @@ class ProcessThread(QtCore.QThread):
                 else:
                     self.sig1a.emit(frame_no, features,
                                image)
+                self.sig2.emit("Locating particles... {:} particles on frame {:}".format(len(features), frame_no))
                 # TODO: Do not append features to all_features if there is save checkpoints happening.
                 all_features.append(features)
             else:
