@@ -122,8 +122,8 @@ class ProcessThread(QtCore.QThread):
                     if len(tmp_particle) == 0:
                         tmp += '\t\t'
                     else:
-                        tmp += str(tmp_particle.iloc[0]['x']) + '\t'
                         tmp += str(tmp_particle.iloc[0]['y']) + '\t'
+                        tmp += str(tmp_particle.iloc[0]['x']) + '\t'
                 #print(tmp)
                 tmp += '\n'
                 f.write(tmp)

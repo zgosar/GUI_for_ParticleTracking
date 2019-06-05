@@ -80,6 +80,7 @@ class Example(QWidget):
         #self.frames.set_end_frame(100) # DEMONSTRATION FILTERING
 
         self.lenframes = len(self.frames)
+        self.height = len(self.frames[0])
         
         if update:
             self.fileTextbox.setText(self.filename[0])
@@ -283,7 +284,7 @@ class Example(QWidget):
             self.set_all_sliders()
 
             #print("Start set image")
-            self.imageImageItem.setImage(self.frames[self.frame_number].T)
+            self.imageImageItem.setImage(np.flip(self.frames[self.frame_number].T, axis=1))
             #print("End set image")
 
             tmp = self.get_current_particles()
@@ -300,11 +301,15 @@ class Example(QWidget):
                 
             ccolors = convert_flot_to_color(tmp.mass.tolist()/self.linRegionUpperLimit)
             
-            self.imageScatter.setData(tmp.x, tmp.y, pxMode=False,
+            self.imageScatter.setData(tmp.x, self.height - tmp.y, pxMode=False,
                 brush=ccolors, size=self.diameter)
-            self.rightPlotItemScat.setData(tmp[self.xAxisSelector.currentText()].tolist(),
-                tmp[self.yAxisSelector.currentText()].tolist(),
-                brush=ccolors)
+            cxdata = tmp[self.xAxisSelector.currentText()].tolist()
+            cydata = tmp[self.yAxisSelector.currentText()].tolist()
+            if 'y' == self.xAxisSelector.currentText():
+                cxdata = [self.height - aaa for aaa in cxdata]
+            if 'y' == self.yAxisSelector.currentText():
+                cydata = [self.height - aaa for aaa in cydata]
+            self.rightPlotItemScat.setData(cxdata, cydata, brush=ccolors)
 
             self.rightPlotItem.setLabel('bottom', self.xAxisSelector.currentText())
             self.rightPlotItem.setLabel('left', self.yAxisSelector.currentText())
@@ -329,9 +334,8 @@ class Example(QWidget):
         self.framesSlider.setSliderPosition(frame)
         self.set_all_sliders()
         
-        #self.imageImageItem.setImage(self.frames[self.frame_number].T)
         #image = np.array(image)
-        self.imageImageItem.setImage(image.T)
+        self.imageImageItem.setImage(np.flip(image.T, axis=1))
         tmp = particles
 
         #print("Locate done in {:}s".format(time()-t), )
@@ -346,12 +350,16 @@ class Example(QWidget):
             
         ccolors = convert_flot_to_color(tmp.mass.tolist()/self.linRegionUpperLimit)
         
-        self.imageScatter.setData(tmp.x, tmp.y, pxMode=False,
+        self.imageScatter.setData(tmp.x, self.height - tmp.y, pxMode=False,
             brush=ccolors,
             size=diameter)
-        self.rightPlotItemScat.setData(tmp[self.xAxisSelector.currentText()].tolist(),
-                                       tmp[self.yAxisSelector.currentText()].tolist(),# pxMode=False,
-                                       brush=ccolors)
+        cxdata = tmp[self.xAxisSelector.currentText()].tolist()
+        cydata = tmp[self.yAxisSelector.currentText()].tolist()
+        if 'y' == self.xAxisSelector.currentText():
+            cxdata = [self.height - aaa for aaa in cxdata]
+        if 'y' == self.yAxisSelector.currentText():
+            cydata = [self.height - aaa for aaa in cydata]
+        self.rightPlotItemScat.setData(cxdata, cydata, brush=ccolors)        
 
         self.rightPlotItem.setLabel('bottom', self.xAxisSelector.currentText())
         self.rightPlotItem.setLabel('left', self.yAxisSelector.currentText())
@@ -482,7 +490,7 @@ class Example(QWidget):
         for i in range(no_of_trajectories):
             trajectories[i] = np.array(trajectories[i])
             self.plots.append(
-                self.rightPlotItem.plot(trajectories[i].T[0], trajectories[i].T[1], pen=pg.mkPen(convert_rgb_to_hex(
+                self.rightPlotItem.plot(trajectories[i].T[0], self.height - trajectories[i].T[1], pen=pg.mkPen(convert_rgb_to_hex(
                     viridis(i/no_of_trajectories)), width=5)))
         self.rightPlotItemScat.clear()
         print("Plotted")
