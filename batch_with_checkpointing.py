@@ -127,6 +127,7 @@ class ProcessThread(QtCore.QThread):
                 #print(tmp)
                 tmp += '\n'
                 f.write(tmp)
+        print("Saved to", self.filename[:-4] + '_out.dat')
    
     def load_particles(self):
         f = pd.DataFrame()

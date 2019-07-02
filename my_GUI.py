@@ -155,7 +155,7 @@ class Example(QWidget):
 
         self.imageViewBoxVerticalSliders.append(
             MySlider.VerticalSlider(
-                0, 10000, integer=True, top=False, title='Maxsize\nUnused'))
+                0, 50, integer=True, top=False, title='Maxsize'))
         self.imageViewBoxVerticalSliders[-1].slider.valueChanged.connect(
             lambda value: self.update('MaxsizeSlider', value)) # If several slots are connected to one signal, the slots will be executed one after the other, in the order they have been connected, when the signal is emitted.
         self.grid.addWidget(self.imageViewBoxVerticalSliders[-1], 1, 3)
@@ -222,7 +222,7 @@ class Example(QWidget):
             self.diameter = int(self.imageViewBoxVerticalSliders[0].getValue())
             #if self.diameter %2 == 0:
             #    self.diameter += 1
-            self.maxsize = None # int(self.imageViewBoxVerticalSliders[1].getValue()) # MAXSIZE is ignored
+            self.maxsize = int(self.imageViewBoxVerticalSliders[1].getValue())
             self.separation = int(self.imageViewBoxVerticalSliders[2].getValue())
             self.invert = self.invertCheckbox.isChecked()
             return self.diameter, self.maxsize, self.separation
@@ -505,7 +505,9 @@ class Example(QWidget):
             #    self.rightPlotItem.plot(trajectories[i].T[0], trajectories[i].T[1], pen=pg.mkPen(convert_rgb_to_hex(
             #        viridis(i/no_of_trajectories)), width=5)))
             # TODO change to line.
-            self.particles_vs_time_plot_item_scat.addPoints([self.frame_number], [no_of_particles])
+
+            #self.particles_vs_time_plot_item_scat.addPoints([self.frame_number], [no_of_particles])
+            # this freezes after a couple of thousand of points.
         else:
             self.particles_vs_time_plot_item_scat.addPoints([self.frame_number], [no_of_particles])
 
