@@ -1,16 +1,20 @@
 import sys
 from PyQt5.QtWidgets import (QWidget, QLabel, QLineEdit, 
     QTextEdit, QGridLayout, QApplication, QVBoxLayout, QHBoxLayout,
-    QSlider, QFileDialog, QPushButton, QStyle, QCheckBox)
+    QSlider, QFileDialog, QPushButton, QStyle, QCheckBox, QRadioButton,
+    QButtonGroup)
 from PyQt5 import QtGui
 from PyQt5.QtCore import pyqtSignal
 import MySlider
 import pyqtgraph as pg
 import trackpy as tp
+import pims
+import TWV_Reader
 import numpy as np
 from time import time
 from copy import deepcopy
 import math
+from tracking import simple_tracking, find_particles_first_frame
 
 from batch_with_checkpointing import *
 
@@ -19,12 +23,57 @@ viridis = plt.get_cmap('viridis')
 viridis_list = viridis(np.array([np.arange(256) for i in range(2)]))
 def convert_rgb_to_hex(rgb):
     return '#%02x%02x%02x' % (int(rgb[0]*255), int(rgb[1]*255), int(rgb[2]*255))
-def convert_flot_to_color(float_list):
+def convert_float_to_color(float_list):
     return list(map(QtGui.QColor,
                         map(convert_rgb_to_hex,
                             map(viridis,
                                 float_list))))
 
+class RadioDemo(QWidget):
+
+    def __init__(self, options, preselected, update_function, parent=None):
+        super(RadioDemo, self).__init__(parent)
+        self.group = QButtonGroup()
+        self.options = options[:]
+        self.layout = QHBoxLayout()
+        self.radio_buttons = []
+        for i, option in enumerate(options):
+            self.radio_buttons.append(QRadioButton(option))
+            self.group.addButton(self.radio_buttons[-1])
+            self.radio_buttons[-1].toggled.connect(lambda value: update_function('RadioButton {:}'.format(option), value))
+            self.layout.addWidget(self.radio_buttons[-1])
+        self.radio_buttons[preselected].setChecked(True)
+        self.last_selected = (preselected, self.options[preselected])
+
+    def which(self):
+        for i in range(len(self.radio_buttons)):
+            if self.radio_buttons[i].isChecked() == True:
+                self.last_selected = (i, self.options[i])
+                return i, self.options[i]
+        return self.last_selected # when changing, one is first unselected and the other is later selected.
+
+class RadioDemo2(QWidget):
+
+    def __init__(self, options, preselected, update_function, parent=None):
+        super(RadioDemo2, self).__init__(parent)
+        self.options = options[:]
+        self.layout = QHBoxLayout()
+        self.radio_buttons = []
+        for i, option in enumerate(options):
+            self.radio_buttons.append(QRadioButton(option))
+            self.radio_buttons[-1].toggled.connect(lambda value: update_function('RadioButton {:}'.format(option), value))
+            self.layout.addWidget(self.radio_buttons[-1])
+        self.radio_buttons[preselected].setChecked(True)
+        self.last_selected = (preselected, self.options[preselected])
+
+    def which(self):
+        for i in range(len(self.radio_buttons)):
+            if self.radio_buttons[i].isChecked() == True:
+                self.last_selected = (i, self.options[i])
+                return i, self.options[i]
+        return self.last_selected # when changing, one is first unselected and the other is later selected.
+            
+        
 class Example(QWidget):
     gridSpacing = 10
     sig = pyqtSignal(str) # outgoing signal
@@ -46,7 +95,7 @@ class Example(QWidget):
             bounds=(0, 255),
             values=(self.linRegionUpperLimit//10, self.linRegionUpperLimit)
             )
-        self.minmass = self.linRegionUpperLimit//10
+        self.minmass = 90
         self.maxmass = self.linRegionUpperLimit
         self.linRegion.sigRegionChangeFinished.connect(self.on_lin_region_change)
         self.linRegion.sigRegionChanged.connect(self.on_lin_region_change)
@@ -126,7 +175,7 @@ class Example(QWidget):
                                                       label_format='{:}/'+str(self.lenframes))
         self.framesSliderLayout = QHBoxLayout()
         self.framesSliderLayout.addWidget(self.framesSlider)
-        self.grid.addLayout(self.framesSliderLayout, 4, 0, -1, -1)
+        self.grid.addLayout(self.framesSliderLayout, 5, 0, -1, -1)
         self.framesSlider.slider.valueChanged.connect(lambda value: self.update('framesSlider', value))
         self.playButton = QPushButton('Start')
         self.playButton.setIcon(self.style().standardIcon(QStyle.SP_MediaPlay))
@@ -138,11 +187,16 @@ class Example(QWidget):
         self.particles_vs_time_plot_item_scat = pg.ScatterPlotItem()
         self.particles_vs_time_plot_item.addItem(self.particles_vs_time_plot_item_scat)
         self.particles_vs_time_plot_item.setXRange(0, self.lenframes, padding=0)
-        self.grid.addWidget(self.particles_vs_time_plot, 3, 0, 1, -1)
+        self.grid.addWidget(self.particles_vs_time_plot, 4, 0, 1, -1)
 
+        self.modeSelector = RadioDemo(['TrackPy', 'SimpleTracking 1step', 'SimpleTracking 2step'], 0, self.update)
+        self.mode = ''
+        self.grid.addLayout(self.modeSelector.layout, 3, 0, 1, 2)
+        self.displaySelector = RadioDemo(['Center', 'Area', 'None'], 1, self.update)
+        self.grid.addLayout(self.displaySelector.layout, 3, 2, 1, -1)
 
         self.lowerStatusText = QLabel()
-        self.grid.addWidget(self.lowerStatusText, 5, 0, -1, -1)
+        self.grid.addWidget(self.lowerStatusText, 6, 0, -1, -1)
 
         self.imageViewBoxVerticalSliders = []
 
@@ -237,7 +291,19 @@ class Example(QWidget):
             self.separation,
             self.diameter)
 
-    def get_current_particles(self):
+    def get_current_particles(self, mode):
+        
+        if mode[1] == 'TrackPy':
+            return self.get_current_particles_trackpy()
+        elif mode[1] == 'SimpleTracking 1step':
+            return find_particles_first_frame(self.frames[self.frame_number],
+                                              self.minmass,
+                                              self.invert,
+                                              min_size=self.diameter,
+                                              max_size=self.maxsize,
+                                              return_area=True)
+
+    def get_current_particles_trackpy(self):
         maxsize=self.maxsize
         if self.imageViewBoxVerticalSliders[2].checkbox_enabled:
             separation = self.separation
@@ -273,9 +339,14 @@ class Example(QWidget):
         Args tell update what called it and the new value (of sliders...). Do not use this arg for different processing in update!
         Please, please. Dont.
         """
-        #print("Self.update", self.running, time(), *args, list(kwargs))
+        try:
+            self.plots
+        except:
+            # Setup not complete, abort.
+            return
+        
         if not self.running:
-            
+            print("Self.update", self.running, time(), *args, list(kwargs))
             t0 = time()
             self.clear_trajectories_plots()
             
@@ -287,41 +358,86 @@ class Example(QWidget):
             self.imageImageItem.setImage(np.flip(self.frames[self.frame_number].T, axis=1))
             #print("End set image")
 
-            tmp = self.get_current_particles()
+            mode = self.modeSelector.which()
+            print('mode', mode)
+            if mode != self.mode:
+                self.mode = mode
+                if mode[1] == 'TrackPy':
+                    self.imageViewBoxVerticalSliders[0].slider.setMaximum(51)
+                    self.imageViewBoxVerticalSliders[1].slider.setMaximum(50)
+                    self.imageViewBoxVerticalSliders[0].title.setText('Diameter')
+                else:
+                    self.imageViewBoxVerticalSliders[0].slider.setMaximum(200)
+                    self.imageViewBoxVerticalSliders[1].slider.setMaximum(5000)
+                    self.imageViewBoxVerticalSliders[0].title.setText('Minsize')
+            tmp = self.get_current_particles(mode)
             #print(tmp)
-
-            if len(tmp) >= 1:
-                tmpmaxmass = tmp.max()['mass']
-                if self.linRegionUpperLimit < 1.01*tmpmaxmass or self.linRegionUpperLimit > 1.10*tmpmaxmass:
-                    if abs(self.maxmass - self.linRegionUpperLimit) < 10**-1:
-                        self.maxmass = 1.05*tmpmaxmass
-                    self.linRegionUpperLimit = 1.05*tmpmaxmass
+            if mode[1] == 'TrackPy':
+                if len(tmp) >= 1:
+                    tmpmaxmass = tmp.max()['mass']
+                    if self.linRegionUpperLimit < 1.01*tmpmaxmass or self.linRegionUpperLimit > 1.10*tmpmaxmass:
+                        if abs(self.maxmass - self.linRegionUpperLimit) < 10**-1:
+                            self.maxmass = 1.05*tmpmaxmass
+                        self.linRegionUpperLimit = 1.05*tmpmaxmass
+                        
+                    self.update_colorbar_texts_and_positions()
                     
+                ccolors = convert_float_to_color(tmp.mass.tolist()/self.linRegionUpperLimit)
+                display_mode = self.displaySelector.which()
+                print('display_mode', display_mode)
+                if display_mode[1] == 'Area':
+                    self.imageScatter.setData(tmp.x, self.height - tmp.y, pxMode=False,
+                        brush=ccolors, symbol='o', size=self.diameter)
+                elif display_mode[1] == 'Center':
+                    self.imageScatter.setData(tmp.x, self.height - tmp.y, pxMode=True,
+                        brush=ccolors, symbol='+', size=20)
+                else:
+                    self.imageScatter.clear()
+                cxdata = tmp[self.xAxisSelector.currentText()].tolist()
+                cydata = tmp[self.yAxisSelector.currentText()].tolist()
+                if 'y' == self.xAxisSelector.currentText():
+                    cxdata = [self.height - aaa for aaa in cxdata]
+                if 'y' == self.yAxisSelector.currentText():
+                    cydata = [self.height - aaa for aaa in cydata]
+                self.rightPlotItemScat.setData(cxdata, cydata, brush=ccolors)
+
+                self.rightPlotItem.setLabel('bottom', self.xAxisSelector.currentText())
+                self.rightPlotItem.setLabel('left', self.yAxisSelector.currentText())
+
+                if args[0] not in ['framesSlider', 'on_lin_region_change',
+                                   'xAxisSelector.currentTextChanged',
+                                   'yAxisSelector.currentTextChanged']: # TODO. Please don't use this type of check.
+                    # Does not work. Does not differentiate between user change and automatic colorbar change.
+                    # TODO, fix this.
+                    self.particles_vs_time_plot_item_scat.clear()
+                    
+                self.bottom_plot_update(len(tmp))
+            else:
+                self.linRegionUpperLimit = 256      
                 self.update_colorbar_texts_and_positions()
-                
-            ccolors = convert_flot_to_color(tmp.mass.tolist()/self.linRegionUpperLimit)
-            
-            self.imageScatter.setData(tmp.x, self.height - tmp.y, pxMode=False,
-                brush=ccolors, size=self.diameter)
-            cxdata = tmp[self.xAxisSelector.currentText()].tolist()
-            cydata = tmp[self.yAxisSelector.currentText()].tolist()
-            if 'y' == self.xAxisSelector.currentText():
-                cxdata = [self.height - aaa for aaa in cxdata]
-            if 'y' == self.yAxisSelector.currentText():
-                cydata = [self.height - aaa for aaa in cydata]
-            self.rightPlotItemScat.setData(cxdata, cydata, brush=ccolors)
 
-            self.rightPlotItem.setLabel('bottom', self.xAxisSelector.currentText())
-            self.rightPlotItem.setLabel('left', self.yAxisSelector.currentText())
-
-            if args[0] not in ['framesSlider', 'on_lin_region_change',
-                               'xAxisSelector.currentTextChanged',
-                               'yAxisSelector.currentTextChanged']: # TODO. Please don't use this type of check.
-                # Does not work. Does not differentiate between user change and automatic colorbar change.
-                # TODO, fix this.
-                self.particles_vs_time_plot_item_scat.clear()
-                
-            self.bottom_plot_update(len(tmp))
+                cx = np.array([k[0] for k in tmp[1]])
+                cy = np.array([k[1] for k in tmp[1]])
+                display_mode = self.displaySelector.which()
+                print('display_mode', display_mode)
+                if display_mode[1] == 'Area':
+                    all_points = []
+                    for k in tmp[1]:
+                        all_points.extend(k[-1])
+                    all_points = np.array(all_points)
+                    if len(all_points) > 0:
+                        cx = all_points.T[0]
+                        cy = all_points.T[1]
+                        self.imageScatter.setData(cy, self.height - cx, pxMode=False,
+                            brush='b', symbol='s', size=1)
+                    else:
+                        self.imageScatter.clear()
+                elif display_mode[1] == 'Center':
+                    ccolors = 'b'
+                    self.imageScatter.setData(cy, self.height - cx, pxMode=True,
+                        brush=ccolors, symbol='+', size=20)
+                else:
+                    self.imageScatter.clear()
             
             self.lowerStatusText.setText("Updated in {:.3f}s".format(time()-t0))
         else:
@@ -338,32 +454,56 @@ class Example(QWidget):
         self.imageImageItem.setImage(np.flip(image.T, axis=1))
         tmp = particles
 
-        #print("Locate done in {:}s".format(time()-t), )
-        if len(tmp) >= 1:
-            tmpmaxmass = tmp.max()['mass']
-            if self.linRegionUpperLimit < 1.01*tmpmaxmass:
-                if abs(self.maxmass - self.linRegionUpperLimit) < 10**-1:
-                    self.maxmass = 1.05*tmpmaxmass
-                self.linRegionUpperLimit = 1.05*tmpmaxmass
+        mode = self.modeSelector.which()
+        if mode[1] == 'TrackPy':
+            if len(tmp) >= 1:
+                tmpmaxmass = tmp.max()['mass']
+                if self.linRegionUpperLimit < 1.01*tmpmaxmass:
+                    if abs(self.maxmass - self.linRegionUpperLimit) < 10**-1:
+                        self.maxmass = 1.05*tmpmaxmass
+                    self.linRegionUpperLimit = 1.05*tmpmaxmass
+                    
+                self.update_colorbar_texts_and_positions()
                 
-            self.update_colorbar_texts_and_positions()
+            ccolors = convert_float_to_color(tmp.mass.tolist()/self.linRegionUpperLimit)
             
-        ccolors = convert_flot_to_color(tmp.mass.tolist()/self.linRegionUpperLimit)
-        
-        self.imageScatter.setData(tmp.x, self.height - tmp.y, pxMode=False,
-            brush=ccolors,
-            size=diameter)
-        cxdata = tmp[self.xAxisSelector.currentText()].tolist()
-        cydata = tmp[self.yAxisSelector.currentText()].tolist()
-        if 'y' == self.xAxisSelector.currentText():
-            cxdata = [self.height - aaa for aaa in cxdata]
-        if 'y' == self.yAxisSelector.currentText():
-            cydata = [self.height - aaa for aaa in cydata]
-        self.rightPlotItemScat.setData(cxdata, cydata, brush=ccolors)        
+            self.imageScatter.setData(tmp.x, self.height - tmp.y, pxMode=False,
+                brush=ccolors,
+                size=diameter)
+            cxdata = tmp[self.xAxisSelector.currentText()].tolist()
+            cydata = tmp[self.yAxisSelector.currentText()].tolist()
+            if 'y' == self.xAxisSelector.currentText():
+                cxdata = [self.height - aaa for aaa in cxdata]
+            if 'y' == self.yAxisSelector.currentText():
+                cydata = [self.height - aaa for aaa in cydata]
+            self.rightPlotItemScat.setData(cxdata, cydata, brush=ccolors)        
 
-        self.rightPlotItem.setLabel('bottom', self.xAxisSelector.currentText())
-        self.rightPlotItem.setLabel('left', self.yAxisSelector.currentText())
-
+            self.rightPlotItem.setLabel('bottom', self.xAxisSelector.currentText())
+            self.rightPlotItem.setLabel('left', self.yAxisSelector.currentText())
+        else:
+            #print(tmp)
+            cx = np.array([k[0] for k in tmp])
+            cy = np.array([k[1] for k in tmp])
+            display_mode = self.displaySelector.which()
+            #print('display_mode', display_mode)
+            if display_mode[1] == 'Area':
+                all_points = []
+                for k in tmp:
+                    all_points.extend(k[-1])
+                all_points = np.array(all_points)
+                if len(all_points) > 0:
+                    cx = all_points.T[0]
+                    cy = all_points.T[1]
+                    self.imageScatter.setData(cy, self.height - cx, pxMode=False,
+                        brush='b', symbol='s', size=1)
+                else:
+                    self.imageScatter.clear()
+            elif display_mode[1] == 'Center':
+                ccolors = 'b'
+                self.imageScatter.setData(cy, self.height - cx, pxMode=True,
+                    brush=ccolors, symbol='+', size=20)
+            else:
+                self.imageScatter.clear()            
         self.bottom_plot_update(len(particles))
         #print(len(particles))
         
@@ -423,10 +563,19 @@ class Example(QWidget):
                 print("Re-raising exception")
                 raise
             self.get_all_sliders()
-            self.thread1 = ProcessThread(self.filename[0], self.frames, folder=self.folder,
+            mode = self.modeSelector.which()
+            if mode[1] == 'TrackPy':
+                self.thread1 = TrackPyProcessThread(self.filename[0], self.frames, folder=self.folder,
                                          diameter=self.diameter, maxsize=self.maxsize,
                                          separation=self.separation, minmass=self.minmass,
                                          invert=self.invert)
+            else:
+                self.thread1 = SimpleTracking1StepProcessThread(
+                    self.filename[0], self.frames, self.folder,
+                    treshold=self.minmass,
+                    invert=self.invert,
+                    max_size=self.maxsize,
+                    min_size=self.diameter)
             self.sig.connect(self.thread1.on_source)
             self.sig.emit('test')
             self.thread1.start()
@@ -533,9 +682,7 @@ class Example(QWidget):
 # TODO Crop for faster execution.
         
 if __name__ == '__main__':
-    import pims
-    import TWV_Reader
-    import trackpy as tp
+
     filename = "tests/test_example.twv"
 
     sys._excepthook = sys.excepthook 

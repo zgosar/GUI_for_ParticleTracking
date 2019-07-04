@@ -6,6 +6,7 @@ import json
 import pandas as pd
 from time import sleep
 import os
+import queue
 
 import pims
 import TWV_Reader
@@ -14,7 +15,7 @@ import TWV_Reader
 from PyQt5 import QtWidgets, QtGui, QtCore
 from PyQt5.QtCore import pyqtSignal
 
-class ProcessThread(QtCore.QThread):
+class TrackPyProcessThread(QtCore.QThread):
     sig1 = pyqtSignal(int, str, np.ndarray)
     # int frame index, str filename, image
     sig1a = pyqtSignal(int, pd.core.frame.DataFrame, np.ndarray)
@@ -350,3 +351,286 @@ class ProcessThread(QtCore.QThread):
                 return pd.DataFrame(columns=list(features.columns) + ['frame'])
         else:
             return output
+
+
+class SimpleTracking1StepProcessThread(QtCore.QThread):
+    sig1 = pyqtSignal(int, str, np.ndarray)
+    # int frame index, str filename, image
+    sig1a = pyqtSignal(int, list, np.ndarray)
+    # the same as sig1, except it doesn't save particles to
+    # file and sends the filename, but sends the particles directly.
+    sig2 = pyqtSignal(str)
+
+    def __init__(self, filename, frames, folder, parent=None,
+                 treshold=100, invert=False, min_size=8,
+                 max_size=250000, max_distance=50):
+        QtCore.QThread.__init__(self, parent)
+        self.filename = filename
+        self.frames = frames
+        self.folder = folder
+        self.treshold = treshold
+        self.invert = invert
+        self.min_size = min_size
+        self.max_size = max_size
+        self.max_distance = max_distance
+
+    def on_source(self, lineftxt):
+        # this will be connected to some event/emmit.
+        self.source_txt = lineftxt
+        #print("Received", lineftxt)
+        #print()
+
+    def run(self, save_checkpoints=False):
+        try:
+            self.sig2.emit("Locating particles...")
+            particles = self.simple_tracking()
+            self.sig2.emit("Getting trap data...")
+            print("get_all_tweezer_positions CALL")
+            #self.frames.check_for_time_jumps()
+            if self.filename[-4:] == '.twv':
+                times, laser_powers, traps = self.frames.get_all_tweezer_positions()
+            else:
+                times = [i for i in range(len(self.frames))]
+                laser_powers = [0 for i in times]
+                traps = [[[0 for i in range(3)] for j in times] for k in range(4)]
+            self.sig2.emit("Saving everything.")
+            self.save_tracked_data(
+                self.filename[:-4] + '_out.dat',
+                len(self.frames),
+                particles, times, laser_powers, traps)
+            self.sig2.emit("Finished.")
+            # combine trajctories with trap data
+            
+        except Exception as err:
+            print(str(err.__class__.__name__), err)
+            import traceback
+            traceback.print_exc()
+
+    def flood_fill(self, frame, flood_frame, start_x, start_y, particle_number, treshold=100, invert=False, return_area=False):
+        """
+        An implementation of a common flood fill algorithm.
+        Pixels with brightness above treshold are considered to be inside (below treshold if invert is True).
+        flood_frame and particle_number are used to remember where particles were.
+        Start position is start_x, start_y, where it is assumed to be above treshold and not checked.
+
+        It also calculates on the fly the center of the pixel.
+
+        Args:
+         - frame: image array
+         - flood_frame: Same shape as frame. 0 where there were no particles found yet.
+         - prev_x, prev_y: Previous positions of particle.
+         - particle_number: Used to mark this particle in flood_frame
+         - treshold, invert, min_size, max_size, max_distance: See simple_tracking.
+         - return_area: 
+
+        Returns:
+         - flood_frame: Updated flood_frame.
+         - particle: Array with data about particle. Position x, y, size in pixels, average brightness and normalization weight.
+           the last element is optional list of coordinates where particle was found
+        """
+        q = queue.Queue()
+        visited = set()
+        q.put((start_x, start_y))
+        if return_area:
+            particle = [0, 0, 0, 0, 0, []]
+        else:
+            particle = [0, 0, 0, 0, 0]
+        while not q.empty():
+            cx, cy = q.get()
+            if (cx, cy) in visited:
+                continue
+            if (cx >= len(frame) or cy >= len(frame[0])
+                or cx < 0 or cy < 0):
+                continue
+            visited.add((cx, cy))
+            if ((not invert and frame[cx][cy] > treshold) or
+                (invert and frame[cx][cy] < treshold)):
+                flood_frame[cx][cy] = particle_number
+                particle[0] += cx*(frame[cx][cy] - treshold)
+                particle[1] += cy*(frame[cx][cy] - treshold)
+                particle[2] += 1
+                particle[3] += frame[cx][cy]
+                particle[4] += frame[cx][cy] - treshold
+                if return_area:
+                    particle[5].append([cx, cy])
+                q.put((cx+1, cy))
+                q.put((cx-1, cy))
+                q.put((cx, cy+1))
+                q.put((cx, cy-1))
+        particle[0] /= particle[4]
+        particle[1] /= particle[4]
+        particle[3] /= particle[2]
+        return flood_frame, particle
+                
+
+    def find_particles_first_frame(self, frame, treshold=100, invert=False, min_size=16, max_size=2500, return_area=False):
+        """
+        Finds particles on the first frame.
+
+        Every pixel with brightness larger than treshold starts a flood fill around its position.
+        Particles that are too small or too big (min_size and max_size are in total number of pixels)
+        are filtered out.
+
+        Args:
+         - frame: image array
+         - treshold, invert, min_size, max_size: See simple_tracking.
+
+        Returns:
+         - flood_frame: Array with the same shape as frame. With 0 where there were no particles found yet and
+                        markers of particles where particles were found.
+         - particle: Array with data about particle. Position x, y, size in pixels, average brightness and normalization weight.    
+        """
+        flood_frame = np.zeros_like(frame)
+        particle_number = 1
+        particles = []
+        for cx in range(len(frame)):
+            for cy in range(len(frame[0])):
+                if (flood_frame[cx][cy] == 0 and
+                    ((not invert and frame[cx][cy] > treshold) or
+                     (invert and frame[cx][cy] < treshold))):
+                    #print('start', cx, cy, particle_number)
+                    flood_frame, particle = self.flood_fill(frame, flood_frame,
+                                             cx, cy, particle_number, treshold=treshold,
+                                             invert=invert, return_area=return_area)
+                    if min_size < particle[2] < max_size:
+                        particles.append(particle[:])
+                    else:
+                        pass
+                        #print("filtering", particle)
+                    particle_number += 1
+        return flood_frame, particles
+
+    def spiral(self, R):
+        """
+        Generates a square spiral walk around (0, 0).
+        Adapted from https://stackoverflow.com/a/398302/
+        """
+        x = y = 0
+        dx = 0
+        dy = -1
+        for i in range((2*R)**2):
+            if (-R < x <= R) and (-R < y <= R):
+                yield (x, y)
+            if x == y or (x < 0 and x == -y) or (x > 0 and x == 1-y):
+                dx, dy = -dy, dx
+            x, y = x+dx, y+dy
+
+    def find_particle_around_position(self, frame, flood_frame, prev_x, prev_y, particle_number,
+                                      treshold=100, invert=False, min_size=16, max_size=2500, max_distance=50,
+                                      return_area=False):
+        """
+        Finds a particle around prev_x, prev_y up to max_distance away (square with a 2*max_distance side).
+
+        Args:
+         - frame: image array
+         - flood_frame: Same shape as frame. 0 where there were no particles found yet.
+         - prev_x, prev_y: Previous positions of particle.
+         - particle_number: Used to mark this particle in flood_frame
+         - treshold, invert, min_size, max_size, max_distance: See simple_tracking.
+
+        Returns:
+         - flood_frame: Updated flood_frame.
+         - particle: Array with data about particle. Position x, y, size in pixels, average brightness and normalization weight.
+        """
+        for dx, dy in self.spiral(max_distance):
+            cx = prev_x + dx
+            cy = prev_y + dy
+            if (cx < len(flood_frame) and cy < len(flood_frame[cx]) and
+                cx >= 0 and cy >= 0 and
+                flood_frame[cx][cy] == 0 and
+                frame[cx][cy] > treshold):
+                flood_frame, particle = self.flood_fill(frame, flood_frame,
+                                             cx, cy, particle_number, treshold=treshold,
+                                             invert=invert, return_area=return_area)
+                if min_size < particle[2] < max_size:
+                    return flood_frame, particle[:]
+        return flood_frame, [0, 0, 0, 0, 0, []]
+        
+    def simple_tracking(self):
+        """
+        Tracks particles on all frames using a simple flood-fill of pixels above treshold.
+        Args:
+         - frames: an array of frames. Each frame must be like 2D array with single numbers as values.
+                   works with pims, but it is not needed.
+         - treshold: Pixels above treshold are considered particle.
+         - invert: If True, it looks for dark patches instead of bright.
+         - min_size, max_size: If particle is below/above this pixel count, it is discarded.
+         - max_distance: The distance in pixels, when we stop looking for a particle on the nex frame
+                         (distance from the previous frame position). Distance is calculated as the
+                         supremum distance (max of distances in x and y directions).
+
+        Returns:
+         - positions: Array. positions[frame number][particle number][x, y, other particle data]
+
+        Note:
+         - The new particle is searched for from the previous particles position in a spiral. That may
+           introduce some bias when multiple particles are near eachother and jumps from one to the other.
+
+        """
+        frames = self.frames
+        treshold = self.treshold
+        invert = self.invert
+        min_size = self.min_size
+        max_size = self.max_size
+        max_distance = self.max_distance
+        return_area = True
+        
+        positions = [] # positions[frame][particle][x, y, ...]
+        flood_frame, particles = self.find_particles_first_frame(frames[0],
+            treshold=treshold, invert=invert, min_size=min_size, max_size=max_size,
+            return_area=return_area)
+        positions.append(particles[:])
+        for i in range(1, len(frames)):
+            flood_frame = np.zeros_like(frames[i])
+            cparticles = []
+            for particle_number in range(len(positions[0])):
+                flood_frame, particle = self.find_particle_around_position(frames[i], flood_frame,
+                    int(round(positions[-1][particle_number][0])),
+                    int(round(positions[-1][particle_number][1])),
+                    particle_number + 1, treshold=treshold, invert=invert, # particle_number + 1 to avoid using 0.
+                    min_size=min_size, max_size=max_size,
+                    max_distance=max_distance, return_area=return_area)
+                cparticles.append(particle)
+            positions.append(cparticles)
+            #cparticles = np.array(cparticles)
+            self.sig1a.emit(i, cparticles, self.frames[i])
+        return positions
+        
+
+    def save_tracked_data(self, filename, Nframes, trajectories, times, laser_powers, traps):
+        """
+        Converts all data to a (.dat) file.
+        Important NOTE:
+        The format will change in the future. Particle data and trap data will go into separate files,
+        and additional trap metadata will be saved.
+        
+        Inputs:
+         - filename: Output filename.
+         - Nframes: Number of frames
+         - trajectories: trajectories - different order than GUIless version
+         - times: List of frame times.
+         - laser powers: List of laser powers for every frame.
+         - traps: List of traps data for every frame. traps[trap number][frame number][position_x/position_y/power]
+         
+        Output format, tab separated:
+         - time, laser power, trap_1_power, trap_1_x, trap_1, y,
+             the same for traps 2-4, particle_1_x, particle_1_y,
+             the same for all particles
+        If a particle is missing from a frame, empty string ('') is placed
+        instead of coordinates.
+        """
+        max_particles = len(trajectories[0])
+        with open(filename, 'w') as f:
+            for i in range(Nframes):
+                tmp = ''
+                tmp += str(times[i]) + '\t'
+                tmp += str(laser_powers[i]) + '\t'
+                for j in range(4): # for j in traps
+                    for k in range(3): # for k in x/y/power of a trap
+                        tmp += str(traps[j][i][k]) + '\t'
+                for j in range(max_particles):
+                    #print(1, j, i, '|', len(trajectories), len(trajectories[0]), len(trajectories[0][0]))
+                    tmp += str(trajectories[i][j][0]) + '\t'
+                    tmp += str(trajectories[i][j][1]) + '\t'
+                tmp += '\n'
+                f.write(tmp)
